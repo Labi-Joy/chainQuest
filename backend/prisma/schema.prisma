@@ -1,0 +1,449 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(cuid())
+  address           String    @unique
+  nonce             String?
+  username          String?
+  bio               String?
+  avatar            String?
+  email             String?   @unique
+  socialLinks       Json?
+  reputationScore    Int       @default(1000)
+  totalQuests       Int       @default(0)
+  completedQuests   Int       @default(0)
+  successRate        Float     @default(0)
+  totalEarnings      Decimal   @default(0.0) @db.Decimal(18, 8)
+  isActive          Boolean   @default(true)
+  isValidator       Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  createdQuests     Quest[]           @relation("QuestCreator")
+  participations    QuestParticipant[]
+  achievements      Achievement[]
+  evidenceSubmissions EvidenceSubmission[]
+  verificationVotes VerificationVote[]
+  notifications     Notification[]
+  stakingRewards    StakingReward[]
+  governanceVotes   GovernanceVote[]
+  disputes          Dispute[]          @relation("DisputeCreator")
+  disputeReviews    DisputeReview[]
+
+  @@map("users")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  icon        String?
+  parentId    String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  quests      Quest[]
+  subcategories Category[] @relation("SubcategoryHierarchy", fields: [parentId], references: [id])
+
+  @@map("categories")
+}
+
+model Quest {
+  id                String    @id @default(cuid())
+  contractAddress    String    @unique
+  title             String
+  description       String
+  creatorId         String
+  categoryId        String
+  stakeAmount       Decimal   @db.Decimal(18, 8)
+  rewardPool        Decimal   @db.Decimal(18, 8)
+  maxParticipants   Int
+  currentParticipants Int      @default(0)
+  verificationThreshold Int
+  status            QuestStatus @default(CREATED)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  expiresAt         DateTime
+  startedAt         DateTime?
+  completedAt       DateTime?
+  metadataURI       String?
+  tags              String[]
+  metadata          Json?
+
+  // Relations
+  creator           User              @relation("QuestCreator", fields: [creatorId], references: [id])
+  category          Category          @relation(fields: [categoryId], references: [id])
+  participations    QuestParticipant[]
+  milestones        Milestone[]
+  evidenceSubmissions EvidenceSubmission[]
+  achievements      Achievement[]
+  disputes          Dispute[]
+  questStats        QuestStats?
+
+  @@map("quests")
+}
+
+model QuestParticipant {
+  id              String    @id @default(cuid())
+  questId         String
+  userId          String
+  stakeAmount     Decimal   @db.Decimal(18, 8)
+  status          ParticipantStatus @default(REGISTERED)
+  joinedAt        DateTime  @default(now())
+  completedAt     DateTime?
+  lastActivity    DateTime  @default(now())
+  progressData    Json?
+
+  // Relations
+  quest           Quest @relation(fields: [questId], references: [id])
+  user            User  @relation(fields: [userId], references: [id])
+  evidenceSubmissions EvidenceSubmission[]
+  stakingRewards  StakingReward[]
+
+  @@unique([questId, userId])
+  @@map("quest_participants")
+}
+
+model Milestone {
+  id                  String   @id @default(cuid())
+  questId             String
+  title               String
+  description         String
+  orderIndex          Int
+  verificationType    VerificationType
+  requiredEvidence    String[]
+  deadline            DateTime
+  status              MilestoneStatus @default(LOCKED)
+  verificationThreshold Int
+  currentVotes        Int      @default(0)
+  approvalVotes       Int      @default(0)
+  rejectionVotes       Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
+  quest               Quest @relation(fields: [questId], references: [id])
+  evidenceSubmissions EvidenceSubmission[]
+
+  @@map("milestones")
+}
+
+model EvidenceSubmission {
+  id                  String    @id @default(cuid())
+  milestoneId         String
+  participantId       String
+  questId             String
+  evidenceType        String
+  ipfsHash            String
+  evidenceHash        String
+  submittedAt         DateTime  @default(now())
+  verificationStatus  VerificationStatus @default(PENDING)
+  verificationDeadline DateTime
+  disputeDeadline     DateTime
+  confidenceScore     Int       @default(0)
+  metadata            Json?
+
+  // Relations
+  milestone           Milestone @relation(fields: [milestoneId], references: [id])
+  participant        QuestParticipant @relation(fields: [participantId], references: [id])
+  quest               Quest @relation(fields: [questId], references: [id])
+  user                User @relation(fields: [participantId], references: [id])
+  verificationVotes   VerificationVote[]
+  disputes            Dispute[]
+
+  @@map("evidence_submissions")
+}
+
+model VerificationVote {
+  id            String    @id @default(cuid())
+  evidenceId    String
+  validatorId  String
+  voteType      VoteType
+  confidenceScore Int
+  reasoning     String?
+  votingPower   Int
+  votedAt       DateTime  @default(now())
+  isValid       Boolean   @default(true)
+
+  // Relations
+  evidence      EvidenceSubmission @relation(fields: [evidenceId], references: [id])
+  validator     User @relation(fields: [validatorId], references: [id])
+
+  @@unique([evidenceId, validatorId])
+  @@map("verification_votes")
+}
+
+model Dispute {
+  id              String    @id @default(cuid())
+  evidenceId      String
+  questId         String
+  challengerId    String
+  reason          String
+  evidence        String?
+  fee             Decimal   @db.Decimal(18, 8)
+  status          DisputeStatus @default(PENDING)
+  createdAt       DateTime  @default(now())
+  deadline        DateTime
+  resolvedAt      DateTime?
+  resolutionVotes Int       @default(0)
+  approvalVotes   Int       @default(0)
+  rejectionVotes   Int       @default(0)
+  metadata        Json?
+
+  // Relations
+  evidence        EvidenceSubmission @relation(fields: [evidenceId], references: [id])
+  quest           Quest @relation(fields: [questId], references: [id])
+  challenger      User @relation("DisputeCreator", fields: [challengerId], references: [id])
+  reviews         DisputeReview[]
+
+  @@map("disputes")
+}
+
+model DisputeReview {
+  id          String    @id @default(cuid())
+  disputeId   String
+  reviewerId  String
+  voteType    VoteType
+  reasoning   String?
+  reviewedAt  DateTime  @default(now())
+  isValid     Boolean   @default(true)
+
+  // Relations
+  dispute     Dispute @relation(fields: [disputeId], references: [id])
+  reviewer    User @relation(fields: [reviewerId], references: [id])
+
+  @@unique([disputeId, reviewerId])
+  @@map("dispute_reviews")
+}
+
+model Achievement {
+  id              String    @id @default(cuid())
+  userId          String
+  questId         String?
+  tokenId         Int?
+  title           String
+  description     String
+  imageUrl        String
+  rarity          AchievementRarity
+  achievementType AchievementType
+  mintedAt        DateTime  @default(now())
+  metadata        Json?
+  transferRestriction TransferRestriction @default(NONE)
+  transferUnlockTime DateTime?
+  isActive        Boolean   @default(true)
+
+  // Relations
+  user            User @relation(fields: [userId], references: [id])
+  quest           Quest? @relation(fields: [questId], references: [id])
+
+  @@map("achievements")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  // Relations
+  user      User @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model StakingReward {
+  id          String    @id @default(cuid())
+  userId      String
+  questId     String
+  amount      Decimal   @db.Decimal(18, 8)
+  rewardType  RewardType
+  distributedAt DateTime @default(now())
+  metadata    Json?
+
+  // Relations
+  user        User @relation(fields: [userId], references: [id])
+  participant QuestParticipant @relation(fields: [questId], references: [id])
+
+  @@map("staking_rewards")
+}
+
+model QuestStats {
+  id                    String   @id @default(cuid())
+  questId               String   @unique
+  totalParticipants     Int      @default(0)
+  completedParticipants Int      @default(0)
+  failedParticipants    Int      @default(0)
+  averageCompletionTime Float    @default(0)
+  totalStaked           Decimal  @db.Decimal(18, 8) @default(0.0)
+  totalRewards          Decimal  @db.Decimal(18, 8) @default(0.0)
+  totalSlashed          Decimal  @db.Decimal(18, 8) @default(0.0)
+  successRate           Float    @default(0)
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  quest                 Quest @relation(fields: [questId], references: [id])
+
+  @@map("quest_stats")
+}
+
+model GovernanceProposal {
+  id              String    @id @default(cuid())
+  proposerId      String
+  title           String
+  description     String
+  targets         String[]
+  values          String[]
+  signatures      String[]
+  calldatas       String[]
+  startBlock      BigInt
+  endBlock        BigInt
+  executionBlock  BigInt
+  executed        Boolean   @default(false)
+  canceled        Boolean   @default(false)
+  forVotes        BigInt    @default(0)
+  againstVotes    BigInt    @default(0)
+  abstainVotes    BigInt    @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  proposer        User @relation(fields: [proposerId], references: [id])
+  votes           GovernanceVote[]
+
+  @@map("governance_proposals")
+}
+
+model GovernanceVote {
+  id          String    @id @default(cuid())
+  proposalId  String
+  voterId     String
+  voteType    VoteType
+  votingPower BigInt
+  votedAt     DateTime  @default(now())
+  reasoning   String?
+
+  // Relations
+  proposal    GovernanceProposal @relation(fields: [proposalId], references: [id])
+  voter       User @relation(fields: [voterId], references: [id])
+
+  @@unique([proposalId, voterId])
+  @@map("governance_votes")
+}
+
+// Enums
+enum QuestStatus {
+  CREATED
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  FAILED
+  EMERGENCY_PAUSED
+}
+
+enum ParticipantStatus {
+  REGISTERED
+  ACTIVE
+  COMPLETED
+  FAILED
+  WITHDRAWN
+}
+
+enum MilestoneStatus {
+  LOCKED
+  ACTIVE
+  COMPLETED
+  FAILED
+}
+
+enum VerificationType {
+  COMMUNITY
+  ORACLE
+  AUTOMATED
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DISPUTED
+  EXPIRED
+}
+
+enum VoteType {
+  AGAINST
+  FOR
+  ABSTAIN
+}
+
+enum DisputeStatus {
+  PENDING
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+enum AchievementRarity {
+  COMMON
+  UNCOMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+enum AchievementType {
+  QUEST_COMPLETION
+  MILESTONE_REACHED
+  SPECIAL_EVENT
+  COMMUNITY_CONTRIBUTION
+  CREATOR_REWARD
+  VALIDATOR_REWARD
+}
+
+enum TransferRestriction {
+  NONE
+  SOUL_BOUND
+  TIMELOCKED
+  APPROVAL_ONLY
+}
+
+enum NotificationType {
+  QUEST_CREATED
+  QUEST_JOINED
+  QUEST_COMPLETED
+  EVIDENCE_SUBMITTED
+  EVIDENCE_VERIFIED
+  ACHIEVEMENT_UNLOCKED
+  REWARD_DISTRIBUTED
+  DISPUTE_CREATED
+  DISPUTE_RESOLVED
+  SYSTEM_ANNOUNCEMENT
+}
+
+enum RewardType {
+  STAKE_RETURN
+  PERFORMANCE_BONUS
+  SPEED_BONUS
+  VALIDATOR_REWARD
+  CREATOR_REWARD
+  REFERRAL_BONUS
+}
